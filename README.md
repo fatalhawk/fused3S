@@ -183,6 +183,9 @@ CSR Adjacency (row_ptr, col_ind)
 
 CS299 — Independent Study
 
+## Acknowledgments and Motivation
+Z. Li and A. Chandramowlishwaran, "Fused3S: Fast Sparse Attention on Tensor Cores," 2025, arXiv:2505.08098. [Online]. Available: https://arxiv.org/abs/2505.08098
+
 ## License
 
 This project is for academic research purposes.
