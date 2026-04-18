@@ -1,0 +1,300 @@
+\documentclass[final]{beamer}
+
+% ====================
+% Packages
+% ====================
+
+\usepackage{fontspec}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[size=a1]{beamerposter}
+\usepackage{./University_of_Michigan__UMich__poster_template__1_/beamerthemegemini}
+\usepackage{./University_of_Michigan__UMich__poster_template__1_/beamercolorthemegemini}
+\usepackage{./University_of_Michigan__UMich__poster_template__1_/beamercolorthememsu}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.14}
+\usepackage{anyfontsize}
+\usepackage{hyperref}
+
+% ====================
+% Lengths
+% ====================
+
+% If you have N columns, choose \sepwidth and \colwidth such that
+% (N+1)*\sepwidth + N*\colwidth = \paperwidth
+\newlength{\sepwidth}
+\newlength{\colwidth}
+\setlength{\sepwidth}{0.025\paperwidth}
+\setlength{\colwidth}{0.3\paperwidth}
+
+\newcommand{\separatorcolumn}{\begin{column}{\sepwidth}\end{column}}
+
+% ====================
+% Title
+% ====================
+
+\title{Fused3S: GPU Kernel Fusion for Sparse Graph Transformer Attention}
+
+\author{Project Supervisor - Prof. Sameer Kulkarni}
+
+\institute[shortinst]{Fused Sparse-Dense Graph Attention on Tensor Cores}
+
+% ====================
+% Footer (optional)
+% ====================
+
+\footercontent{
+  \href{https://github.com/fatalhawk/fused3S}{Mayank Choudhary 24110199} \hfill
+  CS299 \hfill
+  IIT Gandhinagar}
+
+% ====================
+% Logo (optional)
+% ====================
+
+\logoright{\includegraphics[height=5cm]{University_of_Michigan__UMich__poster_template__1_/logos/Final_IITGN-Logo-symmetric-White.png}}
+
+% ====================
+% Body
+% ====================
+
+\begin{document}
+
+\begin{frame}[t]
+\begin{columns}[t]
+\separatorcolumn
+
+% ============ FIRST COLUMN ============
+
+\begin{column}{\colwidth}
+
+  % -------- Overview Block --------
+  \begin{block}{Overview \& Motivation}
+
+    Graph transformers rely on sparse attention mechanisms to capture structural relationships in graph-structured data. However, the standard three-kernel pipeline incurs significant memory traffic:
+    
+    \begin{itemize}
+      \item \textbf{SDDMM} (Sampled Dense-Dense Matrix Multiply)
+      \item \textbf{Softmax} normalization
+      \item \textbf{SpMM} (Sparse Matrix-Matrix Multiply)
+    \end{itemize}
+
+    \vspace{0.5em}
+    
+    \textbf{Fused3S} eliminates intermediate materializations by fusing all three stages into a single GPU kernel using NVIDIA Tensor Cores (WMMA), operating on block-sparse graph adjacency representations.
+
+  \end{block}
+
+  % -------- Key Concepts Block --------
+  \begin{block}{Key Concepts}
+
+    \begin{tabular}{ll}
+      \toprule
+      \textbf{Concept} & \textbf{Description} \\
+      \midrule
+      Block-Sparse Format & CSR $\rightarrow$ 16×16 block tiles \\
+      Fused Pipeline & SDDMM $\rightarrow$ Softmax $\rightarrow$ SpMM \\
+      Tensor Cores & WMMA on 16×16×16 FP16 tiles \\
+      Online Softmax & Streaming algorithm for normalization \\
+      Query Caching & Reused across column blocks \\
+      Load Balancing & Sorted window distribution \\
+      \bottomrule
+    \end{tabular}
+
+  \end{block}
+
+  % -------- Architecture Block --------
+  \begin{block}{Kernel Architecture}
+
+    \begin{description}
+      \item[\textbf{v0}:] Per-Block Softmax + 1D Layout
+      
+      Baseline fused kernel with per-warp softmax. Simple and functional but softmax correctness limited to individual blocks.
+
+      \item[\textbf{v1}:] Online Softmax + 2D Layout
+      
+      Introduces streaming softmax maintaining global max/sum state across column blocks. Uses 2D thread layout for better organization.
+
+      \item[\textbf{v2}:] Register-Resident Output
+      
+      Moves output accumulator into WMMA register fragments, eliminates per-iteration shared memory overhead, uses fragment rescaling.
+    \end{description}
+
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.95\textwidth]{fused3s/sc_csvs/gpu-arch.png}
+      \vspace{-0.5em}
+      \caption*{GPU architecture for the fused kernel design}
+    \end{figure}
+
+  \end{block}
+
+\end{column}
+
+\separatorcolumn
+
+% ============ SECOND COLUMN ============
+
+\begin{column}{\colwidth}
+
+  % -------- Roofline Analysis --------
+  \begin{block}{Performance Characterization: Roofline Model}
+
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.95\textwidth]{fused3s/sc_csvs/roofline.png}
+      \caption{Floating Point Roofline with the following points: blue = v2, orange = v1, purple = v0, green = baseline.}
+    \end{figure}
+
+    The roofline plot reveals:
+    \begin{itemize}
+      \item \textbf{Blue (v2):} highest arithmetic intensity and best achieved throughput among the fused kernels.
+      \item \textbf{Orange (v1):} mid-tier improvement from online softmax and 2D layout.
+      \item \textbf{Purple (v0):} early fused approach with correct block-level performance but lower efficiency.
+      \item \textbf{Green (baseline):} naive GPU baseline with low utilization and memory-bound performance.
+      \item \textbf{Trend:} v0 $\rightarrow$ v1 $\rightarrow$ v2 moves upward and rightward toward the compute roof, showing increasing optimization.
+    \end{itemize}
+
+  \end{block}
+
+  % -------- Performance Metrics Block --------
+  \begin{block}{Performance Metrics (Cora Dataset)}
+
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.95\textwidth]{fused3s/sc_csvs/gpu_throughput.png}
+      \caption{GPU throughput comparison across baseline, v0, v1, and v2 kernels.}
+    \end{figure}
+
+    Key observations from profiling:
+    
+    \begin{itemize}
+      \item \textbf{GPU Throughput:} v2 achieves the highest sustained throughput, clearly outperforming baseline, v0, and v1.
+      \item \textbf{Baseline vs. v0:} Baseline remains strongly memory-bound, while v0 improves compute efficiency by fusing SDDMM, softmax, and SpMM.
+      \item \textbf{v1 improvement:} The addition of online softmax and a 2D thread layout increases achieved throughput and raises the kernel's position on the roofline.
+      \item \textbf{v2 advantage:} Register-resident output and fragment rescaling deliver the largest gain, with v2 showing the best balance of bandwidth and compute utilization.
+      \item \textbf{Memory Bandwidth:} 
+      \begin{itemize}
+        \item Baseline: $\sim 9.96\%$ of theoretical peak
+        \item v2: $\sim 37.19\%$ of theoretical peak (3.7× gain)
+      \end{itemize}
+      \item \textbf{Compute Throughput:}
+      \begin{itemize}
+        \item Baseline: $\sim 4.56\%$ of theoretical peak
+        \item v2: $\sim 21.69\%$ of theoretical peak (4.8× gain)
+      \end{itemize}
+      \item \textbf{Relative progression:} 
+      \begin{itemize}
+        \item Baseline is the lowest-performing reference point.
+        \item v0 gives the first fused speedup.
+        \item v1 brings higher effective throughput.
+        \item v2 delivers the strongest final performance and is the best candidate for production use.
+      \end{itemize}
+    \end{itemize}
+
+  \end{block}
+
+\end{column}
+
+\separatorcolumn
+
+% ============ THIRD COLUMN ============
+
+\begin{column}{\colwidth}
+
+  % -------- Implementation Details --------
+  \begin{block}{Implementation Details}
+
+    \textbf{Technology Stack:}
+    \begin{itemize}
+      \item CUDA Toolkit $\geq\!11.0$
+      \item GPU: Compute Capability $\geq\!$sm\_80 (RTX 4050)
+      \item C++17 with CMake 3.24+
+    \end{itemize}
+
+    \vspace{0.5em}
+    
+    \textbf{Data Processing:}
+    \begin{itemize}
+      \item Datasets: Cora, Citeseer
+      \item Format: CSR (Compressed Sparse Row)
+      \item Conversion Tools: PyTorch Geometric
+    \end{itemize}
+
+    \vspace{0.5em}
+    
+    \textbf{Profiling:}
+    \begin{itemize}
+      \item NVIDIA Nsight Compute (NCU)
+      \item Baseline CPU validation
+      \item Kernel correctness tests
+    \end{itemize}
+
+  \end{block}
+
+  % -------- Key Optimizations --------
+  \begin{block}{Key Optimizations}
+
+    \begin{enumerate}
+      \item \textbf{Kernel Fusion:} Eliminate intermediate matrix materializations in global memory
+      
+      \item \textbf{Shared Memory Pipeline:} Data flows through shared memory / registers instead of DRAM
+      
+      \item \textbf{Tensor Core Utilization:} WMMA instructions for dense matrix blocks within sparse structure
+      
+      \item \textbf{Register Blocking:} v2 keeps output accumulator in register fragments across iterations
+      
+      \item \textbf{Load Balancing:} Sort row windows by weight to minimize SM stalls
+      
+      \item \textbf{Online Softmax:} Numerically correct attention weights without separate normalization pass
+    \end{enumerate}
+
+  \end{block}
+
+  % -------- Results & Contributions --------
+  \begin{block}{Results \& Contributions}
+
+    \begin{itemize}
+      \item[$\checkmark$] Successfully implemented progressive kernel optimizations (v0, v1, v2)
+      
+      \item[$\checkmark$] Achieved \textbf{3-5× memory throughput improvement} over baseline
+      
+      \item[$\checkmark$] Demonstrated correctness via CPU baseline validation
+      
+      \item[$\checkmark$] Comprehensive profiling analysis with Roofline model
+      
+      \item[$\checkmark$] Modular design supporting multiple datasets and configurations
+      
+      \item[$\checkmark$] Open-source implementation with full documentation
+    \end{itemize}
+
+  \end{block}
+
+  \begin{block}{References and Future Work}
+
+    \textbf{Reference:}
+    \begin{itemize}
+      \item Z. Li and A. Chandramowlishwaran, "Fused3S: Fast Sparse Attention on Tensor Cores," May 2025, arXiv:2505.08098. [Online]. Available: https://arxiv.org/abs/2505.08098
+    \end{itemize}
+
+    \textbf{Future Work:}
+    \begin{itemize}
+      \item Target \textbf{> 60\% tensor core utilization} with advanced scheduling, data packing, and kernel tiling strategies.
+      \item Explore finer-grained SM workload balancing, latency hiding, and register pressure reduction for further GPU performance study.
+      \item Extend the fused sparse attention pipeline to larger, real-world graph workloads and mixed-precision execution.
+    \end{itemize}
+
+  \end{block}
+
+\end{column}
+
+\separatorcolumn
+
+\end{columns}
+
+\end{frame}
+
+\end{document}
