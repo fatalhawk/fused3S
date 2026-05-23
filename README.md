@@ -137,13 +137,53 @@ Pre-captured `.ncu-rep` reports are available in the `profiles/` directory for a
 
 ## Benchmarks
 
-Results on **Cora** (2,708 nodes, 10,556 edges, 170 Row Windows) using RTX 4090 (sm_89):
+All timings are **kernel-only** measurements via NVIDIA Nsight Compute (`gpu__time_duration.sum`), excluding launch overhead and `float2half` conversion kernels. GPU: **RTX 4050** (Ada Lovelace, sm_89, 20 SMs). Feature dimension `d = 64`.
 
-| Kernel | Execution Time | Softmax Scope | Output Storage |
-|---|---|---|---|
-| `v0` | ~0.26 ms | Per-block (local) | Global memory directly |
-| `v1` | ~0.43 ms | Global (online) | Shared memory |
-| `v2` | ~0.26 ms | Global (online) | Register fragments |
+### Datasets
+
+| Dataset | Nodes | Edges | Row Windows | Avg. Degree |
+|---|---|---|---|---|
+| Cora | 2,708 | 10,556 | 170 | 3.90 |
+| Citeseer | 3,327 | 9,104 | 208 | 2.74 |
+
+### Kernel Execution Time
+
+| Kernel | Cora (μs) | Citeseer (μs) | Softmax | Output Storage | Correct |
+|---|---|---|---|---|---|
+| `v0` | 13.25 | 14.24 | Per-block | Global memory | No* |
+| `v1` | 20.64 | 22.91 | Online | Shared memory | Yes |
+| `v2` | **8.77** | **9.31** | Online | Registers | Yes |
+
+\* `v0` softmax is only correct within individual 16×16 blocks, not across the full row.
+
+### Speedups (v2 vs others)
+
+| Comparison | Cora | Citeseer |
+|---|---|---|
+| v2 vs v0 | **1.51×** | **1.53×** |
+| v2 vs v1 | **2.35×** | **2.46×** |
+
+### Roofline Analysis (SM Throughput % of Peak)
+
+| Kernel | Cora | Citeseer |
+|---|---|---|
+| `v0` | 14.15% | 16.05% |
+| `v2` | **21.69%** | **24.87%** |
+
+Tensor Core operations (WMMA) appear at high arithmetic intensity (~50–100 FLOP/byte), approaching the compute ceiling. `v2` achieves the highest hardware utilization across both datasets.
+
+### GPU Throughput Utilization (Speed of Light %)
+
+| Metric | v0 (Cora) | v1 (Cora) | v2 (Cora) | v0 (Citeseer) | v1 (Citeseer) | v2 (Citeseer) |
+|---|---|---|---|---|---|---|
+| SM Compute | 25–28% | 25–28% | 25–28% | 13–25% | 13–25% | 13–25% |
+| Memory | — | 61.48% | 37.19% | — | 67.90% | 42.80% |
+
+`v1`'s high memory throughput reflects per-iteration shared memory round-trips for `smem_O[16][64]` rescaling — not efficiency. `v2` converts that traffic into useful compute by keeping the accumulator in registers.
+
+### Correctness Verification
+
+All kernel versions pass element-wise verification against CPU ground truth on both Cora and Citeseer with tolerance ε = 0.05 (accounting for FP16→FP32 precision loss in WMMA). `v0` is verified against a CPU reference using the same per-block softmax semantics.
 
 ## Technical Details
 
