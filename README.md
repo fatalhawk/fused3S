@@ -185,6 +185,27 @@ Tensor Core operations (WMMA) appear at high arithmetic intensity (~50–100 FLO
 
 All kernel versions pass element-wise verification against CPU ground truth on both Cora and Citeseer with tolerance ε = 0.05 (accounting for FP16→FP32 precision loss in WMMA). `v0` is verified against a CPU reference using the same per-block softmax semantics.
 
+### End-to-End Runtime Comparison
+
+Full forward-pass timing (mean of 10 runs) comparing **Fused3S v2** against baseline implementations.
+
+| Method | Cora (ms) | Citeseer (ms) | Device |
+|---|---|---|---|
+| **Fused3S v2** | **0.1945 ± 0.0018** | **0.1742 ± 0.0021** | CUDA |
+| PyG TransformerConv | 0.2965 ± 0.0206 | 0.2849 ± 0.0175 | CUDA |
+| GPU Baseline | 1.0208 ± 0.0232 | 1.0566 ± 0.0185 | CUDA |
+| CPU Baseline | 0.5179 ± 0.0103 | 0.5206 ± 0.0206 | CPU |
+
+#### Speedups (Fused3S v2)
+
+| Baseline | Cora | Citeseer |
+|---|---|---|
+| vs CPU Baseline | **2.66×** | **2.99×** |
+| vs GPU Baseline (naïve) | **5.25×** | **6.07×** |
+| vs PyG TransformerConv | **1.52×** | **1.64×** |
+
+> **Note:** Timings are end-to-end forward-pass measurements using `cudaEvent` (GPU) and `std::chrono` (CPU), averaged over 10 runs with warm-up. GPU: **RTX 4050** (Ada Lovelace, sm_89). Feature dimension `d = 64`.
+
 ## Technical Details
 
 ### Block-Sparse Data Flow
